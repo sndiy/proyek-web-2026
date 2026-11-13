@@ -44,7 +44,7 @@ Bebas pustaka itu syarat yudisium/wisuda di banyak kampus. Referensi riset: Univ
 Mahasiswa klik "Ajukan"
       │
       ▼
-fn_clearance_eligibility(member)
+sp_clearance_eligibility(member)
   ├─ ada pinjaman aktif?   → tolak, tampilkan daftar buku
   ├─ ada denda?            → tolak, tampilkan nominal
   └─ karya akhir belum disetujui? → arahkan ke unggah
@@ -55,7 +55,7 @@ status: diajukan ──► pustakawan verifikasi
       │                   ▼
       │               disetujui
       ▼
-fn_issue_clearance_letter()
+sp_issue_clearance_letter()
   ├─ validasi ulang syarat (anti race condition)
   ├─ buat nomor surat + token QR
   ├─ status: diterbitkan
@@ -70,8 +70,8 @@ Ini usulan, bukan keharusan. Sesuaikan dengan yang kamu kuasai.
 
 | Lapisan | Pilihan | Alasan |
 |---|---|---|
-| DB | PostgreSQL 15+ | Skema sudah ditulis untuk ini (enum, partial index, trigger) |
-| Backend | Node.js + Express/NestJS **atau** Laravel | Pilih yang paling kamu kuasai |
+| DB | MySQL 8.4 (Laragon) + HeidiSQL | `scheme.sql` ditulis untuk ini (generated column, trigger, stored procedure) |
+| Backend | Laravel (satu paket dengan Laragon) **atau** Node.js + Express/NestJS | Pilih yang paling kamu kuasai |
 | Frontend | React/Next.js + Tailwind | |
 | Auth | JWT/session + bcrypt/argon2 | |
 | PDF | Puppeteer / pdf-lib | Surat + QR |
@@ -96,8 +96,8 @@ Logika yang sudah ditanam di DB:
 - Status eksemplar sinkron otomatis saat pinjam/kembali/hilang
 - Denda terlambat/hilang dihitung otomatis saat status loan berubah
 - Pembayaran denda otomatis mengubah status ke `lunas`
-- Satu pengajuan bebas pustaka aktif per anggota (unique partial index)
-- `fn_clearance_eligibility()` dan `fn_issue_clearance_letter()`
+- Satu pengajuan bebas pustaka aktif per anggota (unique index pada generated column, pengganti partial index)
+- `fn_is_eligible()`, `sp_clearance_eligibility()`, dan `sp_issue_clearance_letter()`
 
 ## 6. Endpoint API (draft)
 
@@ -126,7 +126,7 @@ POST   /clearance                  [mahasiswa]   ajukan
 GET    /clearance/me
 GET    /clearance                  [pustakawan]  daftar antrian
 PATCH  /clearance/:id/verify       [pustakawan]  setuju/tolak
-POST   /clearance/:id/issue        [pustakawan]  panggil fn_issue_clearance_letter
+POST   /clearance/:id/issue        [pustakawan]  panggil sp_issue_clearance_letter
 GET    /clearance/:id/letter.pdf
 
 GET    /public/verify/:token       tanpa login
@@ -157,7 +157,7 @@ GET    /public/verify/:token       tanpa login
 
 | Fase | Isi | Estimasi |
 |---|---|---|
-| 0 | Setup repo, DB, migrasi `scheme.sql`, seed | 1–2 hari |
+| 0 | Setup repo, jalankan `scheme.sql` di MySQL, seed | 1–2 hari |
 | 1 | Auth + CRUD buku/eksemplar + katalog | 1 minggu |
 | 2 | Sirkulasi + denda | 1 minggu |
 | 3 | Karya akhir + bebas pustaka + PDF/QR | 1–1,5 minggu |
@@ -172,7 +172,7 @@ Estimasi untuk pengerjaan solo paruh waktu. Perkiraan ini bisa meleset kalau tab
 - Pinjam melebihi `max_loans` → ditolak
 - Satu eksemplar dipinjam dua orang bersamaan → hanya satu berhasil (cek unique index)
 - Kembali telat 5 hari → denda = 5 × `fine_per_day`, tidak melebihi plafon
-- Pembayaran melebihi nominal denda → ditolak
+- Pembayaran melebihi nominal denda → ditolak (error dari trigger MySQL)
 - Ajukan bebas pustaka dengan pinjaman aktif → ditolak
 - Terbitkan surat dua kali untuk pengajuan sama → gagal
 - Token QR salah → 404, bukan error server
@@ -180,15 +180,21 @@ Estimasi untuk pengerjaan solo paruh waktu. Perkiraan ini bisa meleset kalau tab
 ## 11. Risiko & Keputusan Terbuka
 
 - **Aturan tiap kampus beda**: ada yang wajib unggah repositori, ada yang wajib survei, ada yang butuh surat bebas keuangan. Buat syarat bisa dikonfigurasi.
+- **Pencarian buku**: pakai `MATCH(title, authors) AGAINST('kata')` (FULLTEXT index sudah dibuat).
 - **Data awal**: anggota dan koleksi lama harus diimpor. Siapkan format CSV sejak awal.
 - **Integrasi SIAKAD**: kalau kampus punya, sinkron data mahasiswa lewat API/CSV. Kalau tidak ada, input manual.
 - **Tanda tangan surat**: tanda tangan digital/basah dan kebijakan kampus tentang keabsahannya harus ditanyakan ke pihak perpustakaan.
 
 ## 12. Cara Mulai
 
+1. Nyalakan MySQL di Laragon.
+2. Buka HeidiSQL, sambungkan ke Laragon.MySQL, buka `scheme.sql`, tekan **F9** (jalankan semua).
+3. Skrip membuat database baru `perpus`. Jangan jalankan di database `mysql` (database sistem).
+
+Alternatif lewat terminal Laragon:
+
 ```bash
-createdb perpus
-psql -d perpus -f scheme.sql
+mysql -u root < scheme.sql
 ```
 
 Lalu mulai dari Fase 1. Jangan loncat ke fitur bebas pustaka sebelum sirkulasi dan denda jalan, karena bebas pustaka bergantung penuh pada data dua modul itu.
